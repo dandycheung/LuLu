@@ -19,6 +19,7 @@
 
 #import "XPCUserProto.h"
 #import "XPCDaemonProto.h"
+#import "FilterDataProvider.h"
 
 @import OSLog;
 #import <bsm/libbsm.h>
@@ -28,6 +29,9 @@
 
 //alerts
 extern Alerts* alerts;
+
+//filter data provider obj
+extern FilterDataProvider* provider;
 
 //interface for 'extension' to NSXPCConnection
 // allows us to access the 'private' auditToken iVar
@@ -244,13 +248,19 @@ extern os_log_t logHandle;
 
     //set invalidation handler
     [newConnection setInvalidationHandler:^{
-        
+
         //dbg msg
-        os_log_debug(logHandle, "XPC 'invalidationHandler' method invoked");
-        
+        os_log_debug(logHandle, "XPC 'invalidationHandler' method invoked ...client is gone");
+
         //unset user
         alerts.consoleUser = nil;
         
+        //resume any held (related) flows (nil key = all)
+        [provider resumeFlowsForKey:nil verdict:[NEFilterNewFlowVerdict allowVerdict]];
+
+        //clear all shown alerts
+        [alerts removeShown:nil];
+
     }];
     
     //save

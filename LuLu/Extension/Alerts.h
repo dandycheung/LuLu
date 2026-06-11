@@ -45,7 +45,8 @@
 //add an alert to 'shown'
 -(void)addShown:(NSDictionary*)alert;
 
-//remove an alert from 'shown'
--(void)removeShown:(NSDictionary*)alert;
+//remove alert(s) from 'shown'
+// pass a (process) key to remove that one; pass nil to remove all
+-(void)removeShown:(NSString*)key;
 
 @end

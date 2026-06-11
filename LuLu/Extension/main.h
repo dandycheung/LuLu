@@ -15,6 +15,7 @@
 #import "Preferences.h"
 #import "XPCListener.h"
 #import "BlockOrAllowList.h"
+#import "FilterDataProvider.h"
 
 #ifndef main_h
 #define main_h
@@ -23,6 +24,9 @@
 
 //rules obj
 Rules* rules = nil;
+
+//filter data provider obj
+FilterDataProvider* provider = nil;
 
 //alerts obj
 Alerts* alerts = nil;

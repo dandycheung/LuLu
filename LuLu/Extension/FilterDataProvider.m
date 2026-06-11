@@ -36,6 +36,9 @@ extern os_log_t logHandle;
 //rules
 extern Rules* rules;
 
+//filter data provider obj
+extern FilterDataProvider* provider;
+
 //preferences
 extern Preferences* preferences;
 
@@ -68,9 +71,22 @@ extern BlockOrAllowList* blockList;
         
         //alloc related flows
         self.relatedFlows = [NSMutableDictionary dictionary];
-        
+
+        //save global handle
+        // allows the XPC listener to resume held flows when the client goes away
+        provider = self;
+
+        //start timer to reap flows of terminated processes
+        // a process can exit while its alert is pending; its paused flows would otherwise be held forever
+        __weak typeof(self) weakSelf = self;
+        self.reapTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+        dispatch_source_set_timer(self.reapTimer, dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC), 60 * NSEC_PER_SEC, 10 * NSEC_PER_SEC);
+        dispatch_source_set_event_handler(self.reapTimer, ^{
+            [weakSelf reapDeadFlows];
+        });
+        dispatch_resume(self.reapTimer);
     }
-    
+
     return self;
 }
 
@@ -917,10 +933,10 @@ bail:
     //dbg msg
     os_log_debug(logHandle, "created alert...");
 
-    //weak refs to break retain cycle:
+    //weak ref to self to break retain cycle:
     // block → self → context → _socketFlows → flow → savedMessageHandler → block
+    // (the reply block no longer captures the flow; the primary flow is tracked via relatedFlows)
     __weak typeof(self) weakSelf = self;
-    __weak NEFilterSocketFlow* weakFlow = flow;
 
     //deliver alert
     // and process user response
@@ -928,49 +944,31 @@ bail:
     {
         //re-strengthen to avoid races within the block
         __strong typeof(weakSelf) strongSelf = weakSelf;
-        __strong NEFilterSocketFlow* strongFlow = weakFlow;
-        
-        //verdict
-        NEFilterNewFlowVerdict* verdict = nil;
-        
+
         //log msg
         // note, this msg persists in log
         os_log(logHandle, "(user) response: \"%@\" for %{public}@, that was trying to connect to %{public}@:%{public}@", (RULE_STATE_BLOCK == [alert[KEY_ACTION] unsignedIntValue]) ? @"block" : @"allow", alert[KEY_PATH], alert[KEY_ENDPOINT_ADDR], alert[KEY_ENDPOINT_PORT]);
-        
-        //init verdict to allow
-        verdict = [NEFilterNewFlowVerdict allowVerdict];
-        
-        //user replied with block?
-        if( (nil != alert[KEY_ACTION]) &&
-            (RULE_STATE_BLOCK == [alert[KEY_ACTION] unsignedIntValue]) )
-        {
-            //verdict: block
-            verdict = [NEFilterNewFlowVerdict dropVerdict];
-        }
-        
-        //resume flow w/ verdict
-        [strongSelf resumeFlow:strongFlow withVerdict:verdict];
-        
-        //init rule
+
+        //init rule (from user's response)
         rule = [[Rule alloc] init:alert];
 
         //add / save
         [rules add:rule save:![rule isTemporary]];
 
         //remove from 'shown'
-        [alerts removeShown:alert];
-        
+        [alerts removeShown:alert[KEY_KEY]];
+
         //tell user rules changed
         [alerts.xpcUserClient rulesChanged];
-        
-        //process (any) related flows
-        // now that rule is created, related flows should match it or generate new alerts
+
+        //process all paused flows for this process (incl. the primary/alerted flow)
+        // each re-evaluates against the just-created rule and is resumed accordingly
         [strongSelf processRelatedFlow:alert[KEY_KEY]];
     }])
     {
         //failed to deliver, so allow
         [self resumeFlow:flow withVerdict:[NEFilterNewFlowVerdict allowVerdict]];
-        
+
         //process related flows
         [self processRelatedFlow:alert[KEY_KEY]];
     }
@@ -981,6 +979,10 @@ bail:
         //save as shown
         // needed so related (same process!) alerts aren't delivered as well
         [alerts addShown:alert];
+
+        //track the primary (paused) flow alongside related flows
+        // so it's resumed on reply (via processRelatedFlow), reaped if the process dies, or released on disconnect
+        [self addRelatedFlow:alert[KEY_KEY] flow:(NEFilterSocketFlow*)flow];
     }
     
     return;
@@ -1073,6 +1075,89 @@ bail:
     }
     
     os_log_debug(logHandle, "done processing related flows");
+}
+
+//resume flows + drop their key(s)
+// pass a (process) key to resume just that one; pass nil to resume all keys
+-(void)resumeFlowsForKey:(NSString*)key verdict:(NEFilterNewFlowVerdict*)verdict
+{
+    //sync
+    @synchronized(self.relatedFlows)
+    {
+        //one key, or all keys (nil)
+        NSArray* keys = (nil != key) ? @[key] : self.relatedFlows.allKeys;
+        for(NSString* k in keys)
+        {
+            //resume each held flow, then drop the key
+            for(NEFilterSocketFlow* flow in self.relatedFlows[k])
+            {
+                [self resumeFlow:flow withVerdict:verdict];
+            }
+            [self.relatedFlows removeObjectForKey:k];
+        }
+    }
+
+    return;
+}
+
+//remove a single (specific) flow from a key's queue
+// (e.g. an 'allow/block once' flow that was resumed directly)
+-(void)removeRelatedFlow:(NEFilterSocketFlow*)flow forKey:(NSString*)key
+{
+    //sync
+    @synchronized(self.relatedFlows)
+    {
+        //remove the flow
+        [self.relatedFlows[key] removeObject:flow];
+
+        //drop the key if now empty
+        if(0 == [self.relatedFlows[key] count])
+        {
+            [self.relatedFlows removeObjectForKey:key];
+        }
+    }
+
+    return;
+}
+
+//reap flows whose process has terminated
+// a process can exit while its alert is pending; its paused flows would otherwise be held (leaked) forever
+-(void)reapDeadFlows
+{
+    //dbg msg
+    os_log_debug(logHandle, "cleaning up flows from terminated processes...");
+    
+    //sync
+    @synchronized(self.relatedFlows)
+    {
+        //note: iterating a snapshot (allKeys), so safe to mutate the dict in the loop
+        for(NSString* key in self.relatedFlows.allKeys)
+        {
+            //pid via the flow's (kernel) audit token; all flows for a key share the process
+            NEFilterSocketFlow* flow = [self.relatedFlows[key] firstObject];
+            if(nil == flow) continue;
+            pid_t pid = audit_token_to_pid(*(audit_token_t*)flow.sourceAppAuditToken.bytes);
+
+            //process still alive?
+            // leave its flows be (still awaiting a verdict)
+            if((0 != pid) &&
+               (YES == isAlive(pid)))
+            {
+                continue;
+            }
+
+            //process is gone
+            // drop all its held flows, then clear its (now-stale) alert state
+            os_log_debug(logHandle, "process %d (key: %{public}@) has exited; reaping its flows", pid, key);
+            [self resumeFlowsForKey:key verdict:[NEFilterNewFlowVerdict dropVerdict]];
+            [alerts removeShown:key];
+        }
+
+        //dbg msg
+        os_log(logHandle, "related flows remaining: %lu key(s)", (unsigned long)self.relatedFlows.count);
+    }
+
+    return;
 }
 
 //create process object

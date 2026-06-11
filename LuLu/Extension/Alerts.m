@@ -167,19 +167,35 @@ bail:
     return;
 }
 
-//remove an alert from 'shown'
--(void)removeShown:(NSDictionary*)alert
+//remove alert(s) from 'shown'
+// pass a (process) key to remove that one; pass nil to remove all
+// note: removing all is needed when the client (GUI) goes away, else a process w/ a pending
+//       alert stays 'related' forever (its flows queue into relatedFlows but never drain)
+-(void)removeShown:(NSString*)key
 {
-    //dbg msg
-    os_log_debug(logHandle, "removing alert from 'shown': %{public}@ -> %{public}@", alert[KEY_KEY], alert);
-    
-    //remove alert
+    //sync
     @synchronized(self.shownAlerts)
     {
-        //remove
-        [self.shownAlerts removeObjectForKey:alert[KEY_KEY]];
+        //specific key?
+        if(nil != key)
+        {
+            //dbg msg
+            os_log_debug(logHandle, "removing alert from 'shown' for key: %{public}@", key);
+
+            //remove
+            [self.shownAlerts removeObjectForKey:key];
+        }
+        //nil key: remove all
+        else
+        {
+            //dbg msg
+            os_log_debug(logHandle, "removing all (%lu) shown alerts", (unsigned long)self.shownAlerts.count);
+
+            //remove all
+            [self.shownAlerts removeAllObjects];
+        }
     }
-    
+
     return;
 }
 
@@ -188,10 +204,10 @@ bail:
 {
     //flag
     BOOL delivered = NO;
-    
+
     //dbg msg
     os_log_debug(logHandle, "delivering alert %{public}@", alert);
-    
+
     //send via XPC to user
     if(YES != (delivered = [self.xpcUserClient deliverAlert:alert reply:reply]))
     {
