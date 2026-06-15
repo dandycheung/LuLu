@@ -13,9 +13,18 @@
 @import OSLog;
 @import Foundation;
 
+#import "consts.h"
+
 @interface Rule : NSObject <NSSecureCoding>
 {
-    
+    //cached CIDR/range bounds for endpointAddr
+    // lazily parsed on first match; not serialized (endpointAddr is immutable after creation)
+    BOOL _cidrParsed;
+    BOOL _cidrValid;
+    int _cidrFamily;
+    int _cidrLength;
+    uint8_t _cidrLo[16];
+    uint8_t _cidrHi[16];
 }
 
 /* PROPERTIES */
@@ -53,8 +62,13 @@
 //remote host
 @property(nonatomic, retain)NSString* endpointHost;
 
-//flag for endpoint addr
-@property BOOL isEndpointAddrRegex;
+//endpoint address match type {exact, regex, cidr}
+// note: name retained for serialization compatibility (legacy 'isEndpointAddrRegex' bool)
+@property EndpointType isEndpointAddrRegex;
+
+//cached compiled regex for endpointAddr
+// lazily built on first match; not serialized
+@property(nonatomic, retain) NSRegularExpression* endpointRegex;
 
 //remote port
 @property(nonatomic, retain)NSString* endpointPort;
@@ -106,6 +120,12 @@
 
 //is rule user (created)
 -(BOOL)isUserCreated;
+
+//lazily compile & cache the endpoint regex (nil if endpointAddr isn't a valid regex)
+-(NSRegularExpression*)compiledEndpointRegex;
+
+//check if a numeric IP string falls within this rule's (cached) CIDR/range endpoint
+-(BOOL)endpointAddrInRange:(NSString*)address;
 
 //covert to dictionary
 -(NSMutableString*)toJSON;

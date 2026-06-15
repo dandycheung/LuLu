@@ -125,4 +125,14 @@ NSMutableArray* generateProcessHierarchy(pid_t child);
 //is process on internal drive?
 BOOL isInternalProcess(NSString *path);
 
+//parse a CIDR ("a.b.c.d/n" or IPv6) or range ("ipA - ipB") into numeric bounds
+// on success: returns YES, sets *family (AF_INET|AF_INET6), fills lo/hi (16-byte buffers, network order), sets *length (4|16)
+BOOL parseAddressRange(NSString* spec, int* family, uint8_t* lo, uint8_t* hi, int* length);
+
+//check if a numeric IP string falls within [lo, hi] (inclusive) for the given family
+BOOL addressInRange(NSString* address, int family, const uint8_t* lo, const uint8_t* hi, int length);
+
+//is a string a valid CIDR or IP range?
+BOOL isAddressRange(NSString* spec);
+
 #endif

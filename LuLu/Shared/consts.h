@@ -22,6 +22,15 @@ typedef NS_ENUM(NSInteger, RuleDurationTag) {
     RuleDurationCustom = 104,
 };
 
+//endpoint address match type
+// note: persisted (NSCoding) under the legacy key 'isEndpointAddrRegex', so values must stay stable
+//       (legacy bool maps cleanly: 0 -> exact, 1 -> regex)
+typedef NS_ENUM(NSInteger, EndpointType) {
+    EndpointTypeExact = 0,
+    EndpointTypeRegex = 1,
+    EndpointTypeCIDR  = 2,
+};
+
 //patreon url
 #define PATREON_URL @"https://www.patreon.com/join/objective_see"
 

@@ -940,13 +940,10 @@ bail:
 {
     //match
     BOOL isMatch = NO;
-    
-    //error
-    NSError* error = nil;
-    
+
     //endpoint url/hosts
     NSMutableArray* endpointNames = nil;
-    
+
     //endpoint regex
     NSRegularExpression* endpointAddrRegex = nil;
     
@@ -997,22 +994,22 @@ bail:
     
     //endpoint addr a regex?
     // init regex and check for match
-    if(YES == rule.isEndpointAddrRegex)
+    if(EndpointTypeRegex == rule.isEndpointAddrRegex)
     {
         //dbg msg
         os_log_debug(logHandle, "rule's endpoint address is a regex...");
-        
-        //init regex
-        endpointAddrRegex = [NSRegularExpression regularExpressionWithPattern:rule.endpointAddr options:0 error:&error];
+
+        //grab (lazily compiled & cached) regex
+        endpointAddrRegex = [rule compiledEndpointRegex];
         if(nil == endpointAddrRegex)
         {
             //err msg
-            os_log_error(logHandle, "ERROR: failed to created regex from %{public}@ (error: %{public}@)", rule.endpointAddr, error);
-            
+            os_log_error(logHandle, "ERROR: failed to create regex from %{public}@", rule.endpointAddr);
+
             //bail
             goto bail;
         }
-        
+
         //check each
         for(NSString* endpointName in endpointNames)
         {
@@ -1031,7 +1028,33 @@ bail:
         }
     }
     
-    //not regex
+    //endpoint addr a CIDR / IP range?
+    // bounds are parsed & cached on the rule (first use)
+    else if(EndpointTypeCIDR == rule.isEndpointAddrRegex)
+    {
+        //dbg msg
+        os_log_debug(logHandle, "rule's endpoint address is a CIDR/range...");
+
+        //check each
+        // note: only numeric IPs of the rule's family will match (hostnames/URLs fail to parse)
+        for(NSString* endpointName in endpointNames)
+        {
+            //match?
+            if(YES == [rule endpointAddrInRange:endpointName])
+            {
+                //dbg msg
+                os_log_debug(logHandle, "rule match: CIDR/range on %{public}@", endpointName);
+
+                //match
+                isMatch = YES;
+
+                //bail
+                goto bail;
+            }
+        }
+    }
+
+    //not regex / cidr
     // check rule's endpoint address and host for (exact) match
     else
     {

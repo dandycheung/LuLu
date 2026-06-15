@@ -24,6 +24,7 @@
 #import <unistd.h>
 #import <libproc.h>
 #import <sys/stat.h>
+#import <string.h>
 #import <arpa/inet.h>
 #import <sys/socket.h>
 #import <sys/sysctl.h>
@@ -1846,6 +1847,156 @@ BOOL isInternalProcess(NSString *path)
     }
     
 bail:
-    
+
     return isInternal.boolValue;
+}
+
+//parse a CIDR ("a.b.c.d/n" or IPv6) or range ("ipA - ipB") into numeric bounds
+// on success: returns YES, sets *family (AF_INET|AF_INET6), fills lo/hi (16-byte buffers, network order), sets *length (4|16)
+BOOL parseAddressRange(NSString* spec, int* family, uint8_t* lo, uint8_t* hi, int* length)
+{
+    //result
+    BOOL parsed = NO;
+
+    //whitespace set (for trimming)
+    NSCharacterSet* whitespace = NSCharacterSet.whitespaceCharacterSet;
+
+    //bad args?
+    // require a spec and all output pointers
+    if( (nil == spec) ||
+        (NULL == family) || (NULL == lo) || (NULL == hi) || (NULL == length) )
+    {
+        goto bail;
+    }
+
+    //no spec?
+    if(0 == spec.length) goto bail;
+
+    //CIDR?
+    // ...contains a '/'
+    NSRange slash = [spec rangeOfString:@"/"];
+    if(NSNotFound != slash.location)
+    {
+        //split into address & prefix
+        NSString* addrStr = [[spec substringToIndex:slash.location] stringByTrimmingCharactersInSet:whitespace];
+        NSString* prefixStr = [[spec substringFromIndex:(slash.location + 1)] stringByTrimmingCharactersInSet:whitespace];
+
+        //prefix must be all digits
+        if(0 == prefixStr.length) goto bail;
+        if(NSNotFound != [prefixStr rangeOfCharacterFromSet:[NSCharacterSet.decimalDigitCharacterSet invertedSet]].location) goto bail;
+        NSInteger prefix = prefixStr.integerValue;
+
+        //parse base address (determine family)
+        uint8_t base[16] = {0};
+        int fam = 0, len = 0;
+        if(1 == inet_pton(AF_INET, addrStr.UTF8String, base)) { fam = AF_INET; len = 4; }
+        else if(1 == inet_pton(AF_INET6, addrStr.UTF8String, base)) { fam = AF_INET6; len = 16; }
+        else goto bail;
+
+        //validate prefix length
+        if((prefix < 0) || (prefix > (len * 8))) goto bail;
+
+        //apply prefix mask to derive lo (network) & hi (broadcast)
+        int fullBytes = (int)prefix / 8;
+        int remBits = (int)prefix % 8;
+        for(int i = 0; i < len; i++)
+        {
+            //fully-fixed byte
+            if(i < fullBytes)
+            {
+                lo[i] = base[i];
+                hi[i] = base[i];
+            }
+            //partial byte
+            else if((i == fullBytes) && (0 != remBits))
+            {
+                uint8_t mask = (uint8_t)(0xFF << (8 - remBits));
+                lo[i] = base[i] & mask;
+                hi[i] = base[i] | (uint8_t)(~mask);
+            }
+            //fully-wild byte
+            else
+            {
+                lo[i] = 0x00;
+                hi[i] = 0xFF;
+            }
+        }
+
+        //done
+        *family = fam;
+        *length = len;
+        parsed = YES;
+
+        goto bail;
+    }
+
+    //range?
+    // ...contains a '-' (note: IPv6 uses ':' not '-', so '-' is unambiguous as a range separator)
+    NSRange dash = [spec rangeOfString:@"-"];
+    if(NSNotFound != dash.location)
+    {
+        //split into low & high
+        NSString* aStr = [[spec substringToIndex:dash.location] stringByTrimmingCharactersInSet:whitespace];
+        NSString* bStr = [[spec substringFromIndex:(dash.location + 1)] stringByTrimmingCharactersInSet:whitespace];
+
+        //parse both (must be the same family)
+        uint8_t a[16] = {0}, b[16] = {0};
+        int fam = 0, len = 0;
+        if((1 == inet_pton(AF_INET, aStr.UTF8String, a)) && (1 == inet_pton(AF_INET, bStr.UTF8String, b))) { fam = AF_INET; len = 4; }
+        else if((1 == inet_pton(AF_INET6, aStr.UTF8String, a)) && (1 == inet_pton(AF_INET6, bStr.UTF8String, b))) { fam = AF_INET6; len = 16; }
+        else goto bail;
+
+        //order lo <= hi
+        // note: network byte order is big-endian, so memcmp gives correct numeric ordering
+        if(memcmp(a, b, len) <= 0)
+        {
+            memcpy(lo, a, len);
+            memcpy(hi, b, len);
+        }
+        else
+        {
+            memcpy(lo, b, len);
+            memcpy(hi, a, len);
+        }
+
+        //done
+        *family = fam;
+        *length = len;
+        parsed = YES;
+
+        goto bail;
+    }
+
+bail:
+
+    return parsed;
+}
+
+//check if a numeric IP string falls within [lo, hi] (inclusive) for the given family
+BOOL addressInRange(NSString* address, int family, const uint8_t* lo, const uint8_t* hi, int length)
+{
+    //ip bytes
+    uint8_t ip[16] = {0};
+
+    //no address?
+    if(0 == address.length) return NO;
+
+    //parse address in the rule's family
+    // (fails for hostnames/URLs or a mismatched family -> no match)
+    if(1 != inet_pton(family, address.UTF8String, ip)) return NO;
+
+    //lo <= ip <= hi ?
+    return ((memcmp(lo, ip, length) <= 0) && (memcmp(ip, hi, length) <= 0));
+}
+
+//is a string a valid CIDR or IP range?
+// note: a plain single IP ("1.2.3.4", "2001:db8::1") returns NO by design
+//       — those are handled as exact-match rules, not ranges
+BOOL isAddressRange(NSString* spec)
+{
+    //bounds (unused here; we only care if parsing succeeds)
+    int family = 0, length = 0;
+    uint8_t lo[16] = {0}, hi[16] = {0};
+
+    return parseAddressRange(spec, &family, lo, hi, &length);
 }

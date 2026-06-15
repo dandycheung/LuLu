@@ -47,7 +47,8 @@ extern os_log_t logHandle;
         self.endpointAddr.stringValue = self.rule.endpointAddr;
         
         //regex button
-        if(YES == self.rule.isEndpointAddrRegex)
+        // note: cidr/glob rules show their string with the box unchecked
+        if(EndpointTypeRegex == self.rule.isEndpointAddrRegex)
         {
             //on
             self.isEndpointAddrRegex.state = NSControlStateValueOn;
@@ -267,7 +268,7 @@ bail:
     //(remote) endpoint addr
     NSString* endpointAddr = nil;
     
-    //flag
+    //endpoint addr match type {exact, regex, cidr}
     NSNumber* endpointAddrRegex = nil;
     
     //(remote) endpoint addr
@@ -332,13 +333,17 @@ bail:
     // or '*' if blank
     endpointAddr = (0 != self.endpointAddr.stringValue.length) ? self.endpointAddr.stringValue : VALUE_ANY;
     
-    //is endpoint addr (explicitly) a regex?
-    endpointAddrRegex = [NSNumber numberWithBool:(self.isEndpointAddrRegex.state == NSControlStateValueOn)];
+    //determine endpoint addr match type {exact, regex, cidr}
+    EndpointType endpointType = EndpointTypeExact;
 
     //explicit regex?
     // validate that it compiles
-    if(YES == endpointAddrRegex.boolValue)
+    if(NSControlStateValueOn == self.isEndpointAddrRegex.state)
     {
+        //regex
+        endpointType = EndpointTypeRegex;
+
+        //validate
         if(nil == [NSRegularExpression regularExpressionWithPattern:endpointAddr options:0 error:&error])
         {
             //show alert
@@ -348,24 +353,49 @@ bail:
             goto bail;
         }
     }
-    //not an explicit regex, but contains a glob ('*')?
-    // convert to an anchored regex & send as a regex rule
-    // note: the lone '*' (VALUE_ANY = 'any endpoint') is left untouched
-    else if( (YES != [endpointAddr isEqualToString:VALUE_ANY]) &&
-             (NSNotFound != [endpointAddr rangeOfString:@"*"].location) )
+    //not an explicit regex, but the lone '*' (VALUE_ANY) is left untouched ('any endpoint')
+    else if(YES != [endpointAddr isEqualToString:VALUE_ANY])
     {
-        //dbg msg
-        os_log_debug(logHandle, "endpoint address '%{public}@' contains a glob ('*'), converting to regex", endpointAddr);
+        //contains a glob ('*')?
+        // convert to an anchored regex & send as a regex rule
+        if(NSNotFound != [endpointAddr rangeOfString:@"*"].location)
+        {
+            //dbg msg
+            os_log_debug(logHandle, "endpoint address '%{public}@' contains a glob ('*'), converting to regex", endpointAddr);
 
-        //convert glob -> anchored regex
-        endpointAddr = [self regexFromGlob:endpointAddr];
+            //convert glob -> anchored regex
+            endpointAddr = [self regexFromGlob:endpointAddr];
 
-        //...and flag as a regex rule
-        endpointAddrRegex = @YES;
+            //regex
+            endpointType = EndpointTypeRegex;
 
-        //dbg msg
-        os_log_debug(logHandle, "converted glob to regex: %{public}@", endpointAddr);
+            //dbg msg
+            os_log_debug(logHandle, "converted glob to regex: %{public}@", endpointAddr);
+        }
+        //a CIDR ('a.b.c.d/n') or IP range ('ipA - ipB')?
+        // matched numerically (IPv4 & IPv6) by the extension
+        else if(YES == isAddressRange(endpointAddr))
+        {
+            //dbg msg
+            os_log_debug(logHandle, "endpoint address '%{public}@' is a CIDR/range", endpointAddr);
+
+            //cidr
+            endpointType = EndpointTypeCIDR;
+        }
+        //looks like a CIDR ('/') but didn't parse?
+        // reject (rather than silently storing a dead exact-match rule)
+        else if(NSNotFound != [endpointAddr rangeOfString:@"/"].location)
+        {
+            //show alert
+            showAlert(NSAlertStyleWarning, NSLocalizedString(@"ERROR: invalid CIDR", @"ERROR: invalid CIDR"), [NSString stringWithFormat:NSLocalizedString(@"%@ is not a valid CIDR (e.g. 192.168.1.0/24)", @"%@ is not a valid CIDR (e.g. 192.168.1.0/24)"), endpointAddr], @[NSLocalizedString(@"OK", @"OK")]);
+
+            //bail
+            goto bail;
+        }
     }
+
+    //save match type
+    endpointAddrRegex = @(endpointType);
 
     //endpoint port
     // ...set var, but also validate

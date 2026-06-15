@@ -83,8 +83,8 @@ extern os_log_t logHandle;
             // nil? default to all ('*')
             self.endpointAddr = (nil != info[KEY_ENDPOINT_ADDR]) ? info[KEY_ENDPOINT_ADDR] : VALUE_ANY;
             
-            //is endpoint addr a regex?
-            self.isEndpointAddrRegex = [info[KEY_ENDPOINT_ADDR_IS_REGEX] boolValue];
+            //endpoint addr match type {exact, regex, cidr}
+            self.isEndpointAddrRegex = [info[KEY_ENDPOINT_ADDR_IS_REGEX] integerValue];
             
             //init port
             // nil? default to all ('*')
@@ -218,6 +218,43 @@ extern os_log_t logHandle;
     return (self.type.intValue == RULE_TYPE_USER);
 }
 
+//lazily compile & cache the endpoint regex
+// note: endpointAddr is immutable after creation, so the compiled regex is safe to cache
+-(NSRegularExpression*)compiledEndpointRegex
+{
+    //compile once
+    @synchronized(self)
+    {
+        if(nil == self.endpointRegex)
+        {
+            self.endpointRegex = [NSRegularExpression regularExpressionWithPattern:self.endpointAddr options:0 error:nil];
+        }
+    }
+
+    return self.endpointRegex;
+}
+
+//check if a numeric IP string falls within this rule's CIDR/range endpoint
+// note: parses & caches the bounds on first use (endpointAddr is immutable after creation)
+-(BOOL)endpointAddrInRange:(NSString*)address
+{
+    //parse (& cache) bounds once
+    @synchronized(self)
+    {
+        if(NO == _cidrParsed)
+        {
+            _cidrValid = parseAddressRange(self.endpointAddr, &_cidrFamily, _cidrLo, _cidrHi, &_cidrLength);
+            _cidrParsed = YES;
+        }
+    }
+
+    //couldn't parse? no match
+    if(NO == _cidrValid) return NO;
+
+    //numeric containment check
+    return addressInRange(address, _cidrFamily, _cidrLo, _cidrHi, _cidrLength);
+}
+
 //is rule directory?
 -(NSNumber*)isDirectory
 {
@@ -254,7 +291,9 @@ extern os_log_t logHandle;
         self.name = [decoder decodeObjectOfClass:[NSString class] forKey:NSStringFromSelector(@selector(name))];
         self.csInfo = [decoder decodeObjectOfClasses:[NSSet setWithArray:@[[NSDictionary class], [NSArray class], [NSString class], [NSNumber class]]] forKey:NSStringFromSelector(@selector(csInfo))];
         
-        self.isEndpointAddrRegex = [decoder decodeBoolForKey:NSStringFromSelector(@selector(isEndpointAddrRegex))];
+        //endpoint addr match type {exact, regex, cidr}
+        // note: legacy archives stored a bool here (0/1); decodeInteger reads those cleanly
+        self.isEndpointAddrRegex = [decoder decodeIntegerForKey:NSStringFromSelector(@selector(isEndpointAddrRegex))];
         self.endpointAddr = [decoder decodeObjectOfClass:[NSString class] forKey:NSStringFromSelector(@selector(endpointAddr))];
         self.endpointHost = [decoder decodeObjectOfClass:[NSString class] forKey:NSStringFromSelector(@selector(endpointHost))];
         self.endpointPort = [decoder decodeObjectOfClass:[NSString class] forKey:NSStringFromSelector(@selector(endpointPort))];
@@ -288,7 +327,7 @@ extern os_log_t logHandle;
     [encoder encodeObject:self.endpointAddr forKey:NSStringFromSelector(@selector(endpointAddr))];
     [encoder encodeObject:self.endpointHost forKey:NSStringFromSelector(@selector(endpointHost))];
     [encoder encodeObject:self.endpointPort forKey:NSStringFromSelector(@selector(endpointPort))];
-    [encoder encodeBool:self.isEndpointAddrRegex forKey:NSStringFromSelector(@selector(isEndpointAddrRegex))];
+    [encoder encodeInteger:self.isEndpointAddrRegex forKey:NSStringFromSelector(@selector(isEndpointAddrRegex))];
     
     [encoder encodeObject:self.type forKey:NSStringFromSelector(@selector(type))];
     [encoder encodeObject:self.scope forKey:NSStringFromSelector(@selector(scope))];
@@ -498,8 +537,8 @@ bail:
     //port
     [json appendFormat:@"\"%@\" : \"%@\",", NSStringFromSelector(@selector(endpointPort)), self.endpointPort];
     
-    //is regex
-    [json appendFormat:@"\"%@\" : %d,", NSStringFromSelector(@selector(isEndpointAddrRegex)), self.isEndpointAddrRegex];
+    //endpoint addr match type {exact, regex, cidr}
+    [json appendFormat:@"\"%@\" : %ld,", NSStringFromSelector(@selector(isEndpointAddrRegex)), (long)self.isEndpointAddrRegex];
 
     //type
     [json appendFormat:@"\"%@\" : %d,", NSStringFromSelector(@selector(type)), self.type.intValue];
@@ -706,7 +745,7 @@ bail:
             goto bail;
         }
         
-        self.isEndpointAddrRegex = [info[NSStringFromSelector(@selector(isEndpointAddrRegex))] boolValue];
+        self.isEndpointAddrRegex = [info[NSStringFromSelector(@selector(isEndpointAddrRegex))] integerValue];
         
         self.type = info[NSStringFromSelector(@selector(type))];
         if([self.type isKindOfClass:[NSString class]]) {
