@@ -173,7 +173,15 @@ extern BlockOrAllowList* blockList;
         //log msg
         os_log_debug(logHandle, "reason: NEProviderStopReasonUserInitiated");
     }
-    
+
+    //stop the reap timer
+    if(nil != self.reapTimer)
+    {
+        //cancel & release
+        dispatch_source_cancel(self.reapTimer);
+        self.reapTimer = nil;
+    }
+
     //required
     completionHandler();
     
@@ -1022,7 +1030,9 @@ bail:
 -(void)processRelatedFlow:(NSString*)key
 {
     //dbg msg
-    os_log_debug(logHandle, "processing %lu related flow(s) for %{public}@", (unsigned long)[self.relatedFlows[key] count], key);
+    @synchronized(self.relatedFlows) {
+        os_log_debug(logHandle, "processing %lu related flow(s) for %{public}@", (unsigned long)[self.relatedFlows[key] count], key);
+    }
 
     while(YES)
     {

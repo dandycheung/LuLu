@@ -61,16 +61,43 @@ extern Preferences* preferences;
         //bail
         goto bail;
     }
-    
+
+    //no (local) path?
+    // nothing loaded, so nothing to reload
+    if(0 == self.path.length)
+    {
+        //bail
+        goto bail;
+    }
+
     //get modified timestamp
     modified = [[NSFileManager.defaultManager attributesOfItemAtPath:self.path error:nil] objectForKey:NSFileModificationDate];
+
+    //no timestamp?
+    // file is gone/unreadable -> reload (to clear) if we still hold stale items
+    // note: load: empties items, so this naturally fires just once (not per-flow)
+    if(nil == modified)
+    {
+        //stale items to clear?
+        if(0 != self.items.count)
+        {
+            //dbg msg
+            os_log_debug(logHandle, "list file is missing/unreadable ...will reload to clear stale items");
+
+            //yes
+            shouldReload = YES;
+        }
+
+        //bail
+        goto bail;
+    }
 
     //was file modified?
     if(NSOrderedDescending == [modified compare:self.lastModified])
     {
         //dbg msg
         os_log_debug(logHandle, "block list was modified ...will reload");
-        
+
         //yes
         shouldReload = YES;
     }
@@ -87,6 +114,30 @@ bail:
     {
         dispatch_source_cancel(self.reloadTimer);
         self.reloadTimer = nil;
+    }
+}
+
+//clear the list
+// empties items & stops any (remote) reload timer
+-(void)clear
+{
+    //sync
+    @synchronized (self) {
+
+        //dbg msg
+        os_log_debug(logHandle, "clearing list");
+
+        //reset path
+        self.path = @"";
+
+        //reset list
+        [self.items removeAllObjects];
+
+        //reset timestamp
+        self.lastModified = nil;
+
+        //stop any (remote) reload timer
+        [self stopReloadTimer];
     }
 }
 

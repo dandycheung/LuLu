@@ -39,6 +39,10 @@ NS_ASSUME_NONNULL_BEGIN
 //(re)load from disk
 -(void)load:(NSString*)path;
 
+//clear the list
+// empties items & stops any (remote) reload timer
+-(void)clear;
+
 //should reload
 // checks file modification time
 -(BOOL)shouldReload;

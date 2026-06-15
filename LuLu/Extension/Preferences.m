@@ -232,14 +232,24 @@ bail:
             [allowList load:allowListPath];
         }
     }
-    
+    //cleared allow list?
+    // key present but empty -> clear stale in-memory entries
+    else if(nil != allowListPath)
+    {
+        //dbg msg
+        os_log_debug(logHandle, "user cleared 'allow' list ...clearing");
+
+        //clear (empties items & stops any reload timer)
+        [allowList clear];
+    }
+
     //(new) block list?
     // now, trigger reload
     if(0 != [blockListPath length])
     {
         //dbg msg
         os_log_debug(logHandle, "user specified new 'block' list: %{public}@", blockListPath);
-        
+
         //first time?
         if(nil == blockList)
         {
@@ -252,6 +262,16 @@ bail:
             //(re)load
             [blockList load:blockListPath];
         }
+    }
+    //cleared block list?
+    // key present but empty -> clear stale in-memory entries
+    else if(nil != blockListPath)
+    {
+        //dbg msg
+        os_log_debug(logHandle, "user cleared 'block' list ...clearing");
+
+        //clear (empties items & stops any reload timer)
+        [blockList clear];
     }
     
     //happy
