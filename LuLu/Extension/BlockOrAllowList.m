@@ -142,8 +142,12 @@ bail:
 }
 
 //(re)load
--(void)load:(NSString*)path
+// returns YES if the list loaded (or there's nothing to load); NO on a fetch/read failure
+-(BOOL)load:(NSString*)path
 {
+    //result
+    BOOL loaded = NO;
+
     //error
     NSError* error = nil;
     
@@ -171,6 +175,9 @@ bail:
 
         //no remote list -> stop any reload timer
         [self stopReloadTimer];
+
+        //nothing to load (success)
+        loaded = YES;
 
         //bail
         goto bail;
@@ -254,12 +261,15 @@ bail:
         
     //dbg msg
     os_log_debug(logHandle, "(re)loaded %lu list items", (unsigned long)self.items.count);
-    
+
+    //success
+    loaded = YES;
+
     } //sync
 
 bail:
-    
-    return;
+
+    return loaded;
 }
 
 //check if flow matches item on block or allow list

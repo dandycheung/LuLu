@@ -37,7 +37,8 @@ NS_ASSUME_NONNULL_BEGIN
 -(id)init:(NSString*)path;
 
 //(re)load from disk
--(void)load:(NSString*)path;
+// returns YES if the list loaded (or there's nothing to load); NO on a fetch/read failure
+-(BOOL)load:(NSString*)path;
 
 //clear the list
 // empties items & stops any (remote) reload timer

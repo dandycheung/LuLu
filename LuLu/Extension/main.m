@@ -112,10 +112,42 @@ int main(int argc, char *argv[])
     if(YES == [preferences.preferences[PREF_USE_ALLOW_LIST] boolValue])
     {
         //dbg msg
-        os_log_debug(logHandle, "init'ing allowing list");
+        os_log_debug(logHandle, "init'ing allow list");
 
-        //alloc/init/load allow list
-        allowList = [[BlockOrAllowList alloc] init:preferences.preferences[PREF_ALLOW_LIST]];
+        //path
+        NSString* allowListPath = preferences.preferences[PREF_ALLOW_LIST];
+
+        //load in the background, retrying until it succeeds
+        // a remote list can fail to load at boot (network not up yet); don't block startup on it
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
+
+            //alloc/init
+            allowList = [[BlockOrAllowList alloc] init:allowListPath];
+
+            //loaded?
+            BOOL loaded = NO;
+
+            //(re)try the load (up to 10x), napping between attempts
+            for(NSUInteger attempt = 1; attempt <= 10; attempt++)
+            {
+                //loaded? done
+                if(YES == [allowList load:allowListPath])
+                {
+                    loaded = YES;
+                    break;
+                }
+
+                //err msg
+                os_log_error(logHandle, "allow list load failed (attempt %lu) ...will retry", (unsigned long)attempt);
+
+                //nap, then retry
+                if(attempt < 10) [NSThread sleepForTimeInterval:3.0f];
+            }
+
+            //final outcome
+            if(YES == loaded) os_log_debug(logHandle, "allow list loaded (%lu items)", (unsigned long)allowList.items.count);
+            else os_log_error(logHandle, "ERROR: gave up loading allow list after 10 attempts");
+        });
     }
 
     //block list?
@@ -124,8 +156,40 @@ int main(int argc, char *argv[])
         //dbg msg
         os_log_debug(logHandle, "init'ing block list");
 
-        //alloc/init/load block list
-        blockList = [[BlockOrAllowList alloc] init:preferences.preferences[PREF_BLOCK_LIST]];
+        //path
+        NSString* blockListPath = preferences.preferences[PREF_BLOCK_LIST];
+
+        //load in the background, retrying until it succeeds
+        // a remote list can fail to load at boot (network not up yet); don't block startup on it
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
+
+            //alloc/init
+            blockList = [[BlockOrAllowList alloc] init:blockListPath];
+
+            //loaded?
+            BOOL loaded = NO;
+
+            //(re)try the load (up to 10x), napping between attempts
+            for(NSUInteger attempt = 1; attempt <= 10; attempt++)
+            {
+                //loaded? done
+                if(YES == [blockList load:blockListPath])
+                {
+                    loaded = YES;
+                    break;
+                }
+
+                //err msg
+                os_log_error(logHandle, "block list load failed (attempt %lu) ...will retry", (unsigned long)attempt);
+
+                //nap, then retry
+                if(attempt < 10) [NSThread sleepForTimeInterval:3.0f];
+            }
+
+            //final outcome
+            if(YES == loaded) os_log_debug(logHandle, "block list loaded (%lu items)", (unsigned long)blockList.items.count);
+            else os_log_error(logHandle, "ERROR: gave up loading block list after 10 attempts");
+        });
     }
     
     }//pool
