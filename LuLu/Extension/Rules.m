@@ -299,7 +299,10 @@ bail:
     
     //item rules
     NSArray* itemRules = nil;
-    
+
+    //expired rules
+    NSMutableArray* expiredRules = nil;
+
     //interval for expirations
     NSTimeInterval timeInterval = 0;
     
@@ -363,7 +366,11 @@ bail:
         }
     }
     
+    //init list for expired rules
+    expiredRules = [NSMutableArray array];
+
     //setup deletion for any rules that have an expiration
+    // note: can't delete mid-enumeration, so expired ones are collected, then deleted below
     for(NSString* key in self.rules)
     {
         //item rules
@@ -385,23 +392,23 @@ bail:
             timeInterval = [rule.expiration timeIntervalSinceNow];
             
             //already expired?
-            // just go ahead and delete
+            // save, so can be deleted (below, once enumeration is done)
             if(timeInterval <= 0)
             {
-                //delete
-                [self delete:rule.key rule:rule.uuid];
+                //save
+                [expiredRules addObject:rule];
             }
             
             //setup dispatch to delete
             else
             {
                 //dbg msg
-                os_log_debug(logHandle, "setting up dispatch to delete one expiration is hit");
+                os_log_debug(logHandle, "setting up dispatch to delete once expiration is hit");
                 
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeInterval * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                     
                     //dbg msg
-                    os_log_debug(logHandle, "rule expiration hit, will delete!");
+                    os_log_debug(logHandle, "rule expiration hit, will delete");
                     
                     //delete
                     [self delete:rule.key rule:rule.uuid];
@@ -413,7 +420,15 @@ bail:
             }
         }
     }
-    
+
+    //now, enumeration done
+    // can safely delete any/all expired rules
+    for(Rule* rule in expiredRules)
+    {
+        //delete
+        [self delete:rule.key rule:rule.uuid];
+    }
+
     //dbg msg
     os_log_debug(logHandle, "loaded %lu rules", (unsigned long)self.rules.count);
 
