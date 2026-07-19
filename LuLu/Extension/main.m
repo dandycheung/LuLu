@@ -141,12 +141,17 @@ int main(int argc, char *argv[])
                 os_log_error(logHandle, "allow list load failed (attempt %lu) ...will retry", (unsigned long)attempt);
 
                 //nap, then retry
-                if(attempt < 10) [NSThread sleepForTimeInterval:3.0f];
+                if(attempt < 10) {
+                    [NSThread sleepForTimeInterval:3.0f];
+                }
             }
 
             //final outcome
-            if(YES == loaded) os_log_debug(logHandle, "allow list loaded (%lu items)", (unsigned long)allowList.items.count);
-            else os_log_error(logHandle, "ERROR: gave up loading allow list after 10 attempts");
+            if(YES == loaded) {
+                os_log_debug(logHandle, "allow list loaded (%lu items)", (unsigned long)allowList.items.count);
+            } else {
+                os_log_error(logHandle, "ERROR: gave up loading allow list after 10 attempts");
+            }
         });
     }
 
@@ -183,12 +188,17 @@ int main(int argc, char *argv[])
                 os_log_error(logHandle, "block list load failed (attempt %lu) ...will retry", (unsigned long)attempt);
 
                 //nap, then retry
-                if(attempt < 10) [NSThread sleepForTimeInterval:3.0f];
+                if(attempt < 10) {
+                    [NSThread sleepForTimeInterval:3.0f];
+                }
             }
 
             //final outcome
-            if(YES == loaded) os_log_debug(logHandle, "block list loaded (%lu items)", (unsigned long)blockList.items.count);
-            else os_log_error(logHandle, "ERROR: gave up loading block list after 10 attempts");
+            if(YES == loaded) {
+                os_log_debug(logHandle, "block list loaded (%lu items)", (unsigned long)blockList.items.count);
+            } else {
+                os_log_error(logHandle, "ERROR: gave up loading block list after 10 attempts");
+            }
         });
     }
     

@@ -142,7 +142,6 @@ bail:
 }
 
 //(re)load
-// returns YES if the list loaded (or there's nothing to load); NO on a fetch/read failure
 -(BOOL)load:(NSString*)path
 {
     //result
